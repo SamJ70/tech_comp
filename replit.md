@@ -6,14 +6,21 @@ This is an autonomous backend application that compares technological progress b
 
 ## Recent Changes
 
-**October 21, 2025**: Enhanced data collection and validation
+**October 21, 2025**: Enhanced data collection, validation, and evidence-based comparison logic
 - Improved DataFetcher to target multiple Wikipedia pages per country/domain combination
 - Added domain-specific page variations (e.g., "AI" → "Artificial_intelligence", "Machine_learning", etc.)
 - Implemented comprehensive logging throughout the data fetching pipeline
 - Added data validation in main.py to ensure sufficient content before processing (minimum 500 characters)
 - Enhanced error handling to surface failures instead of silent swallowing
 - System now successfully collects 500K-1M+ characters per country for meaningful analysis
-- Tested with India vs USA in Artificial Intelligence domain: generated 38KB Word document with real data
+
+**Improved Comparison Logic**:
+- Normalized keyword scores by text length (per 10,000 characters) to prevent bias from different data volumes
+- Extract specific numerical data: funding amounts, company counts, recent developments (2020-2025)
+- Identify major global tech companies (Google, Microsoft, OpenAI, Amazon, etc.) for evidence-based comparison
+- Use factual evidence (funding levels, major companies, recent developments) to determine leaders
+- Add clear disclaimers about data limitations and Wikipedia coverage differences
+- Tested with India vs USA in AI: correctly identifies USA as leader based on $50B vs $17.2B funding and major tech companies
 
 ## User Preferences
 
