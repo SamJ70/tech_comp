@@ -4,10 +4,12 @@ from pydantic import BaseModel
 import os
 from datetime import datetime
 
-from data_fetcher import DataFetcher
-from data_analyzer import DataAnalyzer
-from document_generator import DocumentGenerator
+# Change these imports
+from data_fetcher import ImprovedDataFetcher as DataFetcher
+from data_analyzer import ImprovedDataAnalyzer as DataAnalyzer
+from document_generator import ImprovedDocumentGenerator as DocumentGenerator
 
+# Rest of main.py stays the same!
 app = FastAPI(
     title="Country Tech Domain Comparison API",
     description="Autonomous backend for comparing technological progress between countries",

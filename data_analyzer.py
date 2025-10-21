@@ -1,19 +1,10 @@
-from typing import Dict, List, Tuple
+from typing import Dict, List
 import re
 from collections import Counter
 from datetime import datetime
 
-class DataAnalyzer:
+class ImprovedDataAnalyzer:
     def __init__(self):
-        self.tech_keywords = {
-            "research": ["research", "development", "innovation", "scientific", "study", "investigation", "laboratory", "paper"],
-            "industry": ["startup", "company", "corporation", "industry", "commercial", "enterprise", "firm", "tech giant"],
-            "government": ["government", "policy", "initiative", "national", "ministry", "program", "regulation", "strategy"],
-            "investment": ["investment", "funding", "capital", "venture", "finance", "billion", "million", "valuation"],
-            "education": ["university", "institute", "education", "training", "academic", "scholar", "graduate"],
-            "innovation": ["patent", "innovation", "breakthrough", "advancement", "cutting-edge", "pioneering"]
-        }
-        
         self.current_year = datetime.now().year
     
     def analyze_and_compare(
@@ -24,364 +15,568 @@ class DataAnalyzer:
         country1_data: Dict,
         country2_data: Dict
     ) -> Dict:
-        country1_analysis = self._analyze_country_data(country1, domain, country1_data)
-        country2_analysis = self._analyze_country_data(country2, domain, country2_data)
+        """Perform evidence-based analysis and comparison"""
         
-        comparison = self._generate_comparison(
-            country1, country2, domain, country1_analysis, country2_analysis
+        # Analyze each country
+        analysis1 = self._analyze_country_data(country1, domain, country1_data)
+        analysis2 = self._analyze_country_data(country2, domain, country2_data)
+        
+        # Generate comparison
+        comparison = self._generate_evidence_based_comparison(
+            country1, country2, domain, analysis1, analysis2
         )
         
-        overall_analysis = self._generate_overall_analysis(
-            country1, country2, domain, country1_analysis, country2_analysis, comparison
+        # Overall conclusion
+        overall = self._generate_balanced_conclusion(
+            country1, country2, domain, analysis1, analysis2, comparison
         )
         
-        return {
+        # Validate and add quality metrics
+        result = {
             "summary": {
-                country1: country1_analysis["summary"],
-                country2: country2_analysis["summary"]
+                country1: analysis1["summary"],
+                country2: analysis2["summary"]
+            },
+            "concrete_metrics": {
+                country1: analysis1["concrete_metrics"],
+                country2: analysis2["concrete_metrics"]
             },
             "comparison": comparison,
-            "overall_analysis": overall_analysis,
-            "metrics": {
-                country1: country1_analysis["metrics"],
-                country2: country2_analysis["metrics"]
-            },
+            "overall_analysis": overall,
             "resources": {
-                country1: country1_analysis["key_entities"],
-                country2: country2_analysis["key_entities"]
+                country1: analysis1["key_entities"],
+                country2: analysis2["key_entities"]
             },
-            "news": country1_analysis["highlights"] + country2_analysis["highlights"]
+            "news": analysis1["highlights"] + analysis2["highlights"]
         }
+        
+        # Add data quality assessment
+        result = self._add_quality_assessment(result, country1_data, country2_data)
+        
+        return result
     
     def _analyze_country_data(self, country: str, domain: str, data: Dict) -> Dict:
+        """Extract concrete, verifiable metrics"""
         combined_text = " ".join(data.get("raw_text", []))
         text_length = len(combined_text)
         
-        if text_length < 100:
-            combined_text = f"{country} is developing its {domain} sector through various initiatives and investments."
-            text_length = len(combined_text)
+        # Extract concrete metrics
+        concrete_metrics = self._extract_concrete_metrics(combined_text, domain)
         
-        normalized_keyword_scores = self._calculate_normalized_scores(combined_text, text_length)
+        # Extract companies and valuations
+        companies = self._extract_companies_with_context(combined_text, domain)
         
-        numerical_data = self._extract_numerical_data(combined_text, domain)
+        # Extract recent developments with dates
+        recent_dev = self._extract_dated_developments(combined_text, domain, country)
         
-        companies = self._extract_companies(combined_text, domain)
+        # Generate evidence-based summary
+        summary = self._generate_evidence_summary(
+            country, domain, concrete_metrics, companies, recent_dev
+        )
         
-        recent_developments = self._extract_recent_developments(combined_text, domain, country)
+        # Extract key entities
+        entities = self._extract_key_entities(combined_text, country)
         
-        summary = self._generate_summary(country, domain, combined_text, recent_developments)
-        
-        key_entities = self._extract_key_entities(combined_text, country)
-        
+        # Extract highlights
         highlights = self._extract_highlights(combined_text, domain, country)
-        
-        metrics = {
-            "total_companies_mentioned": len(companies),
-            "funding_amounts": numerical_data["funding"],
-            "recent_developments_count": len(recent_developments),
-            "normalized_activity_score": sum(normalized_keyword_scores.values()) / len(normalized_keyword_scores) if normalized_keyword_scores else 0,
-            "text_coverage": text_length
-        }
         
         return {
             "summary": summary,
-            "normalized_scores": normalized_keyword_scores,
-            "metrics": metrics,
-            "companies": companies[:10],
-            "recent_developments": recent_developments[:5],
-            "numerical_data": numerical_data,
-            "key_entities": key_entities,
+            "concrete_metrics": concrete_metrics,
+            "companies": companies[:15],
+            "recent_developments": recent_dev[:8],
+            "key_entities": entities,
             "highlights": highlights,
-            "text_length": text_length
+            "text_length": text_length,
+            "source_count": len(data.get("raw_text", [])),
+            "avg_relevance": sum(data.get("relevance_scores", [0])) / max(len(data.get("relevance_scores", [0])), 1)
         }
     
-    def _calculate_normalized_scores(self, text: str, text_length: int) -> Dict[str, float]:
-        """Calculate keyword scores normalized per 10,000 characters"""
-        normalized_scores = {}
-        text_lower = text.lower()
-        
-        for category, keywords in self.tech_keywords.items():
-            raw_count = sum(text_lower.count(kw) for kw in keywords)
-            normalized_score = (raw_count / text_length) * 10000 if text_length > 0 else 0
-            normalized_scores[category] = round(normalized_score, 2)
-        
-        return normalized_scores
-    
-    def _extract_numerical_data(self, text: str, domain: str) -> Dict:
-        """Extract numerical facts like funding amounts, company counts, etc."""
-        data = {
-            "funding": [],
-            "valuations": [],
+    def _extract_concrete_metrics(self, text: str, domain: str) -> Dict:
+        """Extract specific, verifiable numbers"""
+        metrics = {
+            "funding_amounts": [],
+            "company_valuations": [],
+            "patent_counts": [],
+            "research_output": [],
             "market_size": [],
-            "growth_rate": []
+            "growth_rates": [],
+            "investment_deals": []
         }
         
-        billion_pattern = r'(\$?\d+(?:\.\d+)?)\s*billion'
-        billion_matches = re.findall(billion_pattern, text, re.IGNORECASE)
-        data["funding"].extend([f"${m} billion" for m in billion_matches[:5]])
+        # Funding: "$5 billion funding" or "received $2.3 million"
+        funding_pattern = r'(?:received|raised|secured|invested|funding of|investment of)?\s*\$?(\d+(?:\.\d+)?)\s*(billion|million|trillion)\s*(?:in funding|investment|capital)?'
+        for match in re.finditer(funding_pattern, text, re.IGNORECASE):
+            amount = float(match.group(1))
+            unit = match.group(2).lower()
+            
+            if unit == "billion":
+                amount_display = f"${amount}B"
+            elif unit == "million":
+                amount_display = f"${amount}M"
+            else:
+                amount_display = f"${amount}T"
+            
+            metrics["funding_amounts"].append(amount_display)
         
-        million_pattern = r'(\$?\d+(?:\.\d+)?)\s*million'
-        million_matches = re.findall(million_pattern, text, re.IGNORECASE)
-        data["funding"].extend([f"${m} million" for m in million_matches[:3]])
+        # Patents: "filed 10,000 patents" or "12,345 AI patents"
+        patent_pattern = r'(\d{1,3}(?:,\d{3})*|\d+)\s+(?:AI|technology|tech|robotics|software)?\s*patents?'
+        matches = re.findall(patent_pattern, text, re.IGNORECASE)
+        metrics["patent_counts"] = [m.replace(',', '') for m in matches[:5]]
         
-        growth_pattern = r'(\d+(?:\.\d+)?)\s*(?:%|percent)\s*(?:growth|increase)'
-        growth_matches = re.findall(growth_pattern, text, re.IGNORECASE)
-        data["growth_rate"].extend([f"{m}%" for m in growth_matches[:3]])
+        # Market size: "market worth $50 billion"
+        market_pattern = r'market\s+(?:worth|size|valued at)\s+\$?(\d+(?:\.\d+)?)\s*(billion|million|trillion)'
+        for match in re.finditer(market_pattern, text, re.IGNORECASE):
+            amount = float(match.group(1))
+            unit = match.group(2).lower()
+            metrics["market_size"].append(f"${amount}{unit[0].upper()}")
         
-        return data
+        # Growth rates: "30% growth" or "grew by 45 percent"
+        growth_pattern = r'(\d+(?:\.\d+)?)\s*(?:%|percent)\s*(?:growth|increase|rise)'
+        matches = re.findall(growth_pattern, text, re.IGNORECASE)
+        metrics["growth_rates"] = [f"{m}%" for m in matches[:5]]
+        
+        # Research output: "published 5,000 papers"
+        research_pattern = r'(?:published|produced)\s+(\d{1,3}(?:,\d{3})*)\s+(?:research\s+)?papers?'
+        matches = re.findall(research_pattern, text, re.IGNORECASE)
+        metrics["research_output"] = [m for m in matches[:5]]
+        
+        # Count investment deals
+        deal_keywords = ["acquired", "acquisition", "invested in", "partnership with", "joint venture"]
+        metrics["investment_deals"] = [kw for kw in deal_keywords if kw in text.lower()]
+        
+        return metrics
     
-    def _extract_companies(self, text: str, domain: str) -> List[str]:
-        """Extract company and organization names"""
+    def _extract_companies_with_context(self, text: str, domain: str) -> List[Dict]:
+        """Extract companies with surrounding context"""
         companies = []
         
-        company_patterns = [
-            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:\s+(?:Inc|Corp|Ltd|LLC|Technologies|Labs|Systems|Solutions|AI|Tech)))\b',
-            r'\b(Google|Microsoft|Amazon|Apple|Meta|Facebook|IBM|Intel|NVIDIA|OpenAI|DeepMind|Tesla)\b',
+        # Major tech companies
+        major_companies = [
+            "Google", "Microsoft", "Amazon", "Apple", "Meta", "Facebook",
+            "IBM", "Intel", "NVIDIA", "OpenAI", "DeepMind", "Tesla",
+            "Anthropic", "Baidu", "Alibaba", "Tencent", "Samsung"
         ]
         
-        for pattern in company_patterns:
-            matches = re.findall(pattern, text)
-            companies.extend(matches)
+        # Find major companies with context
+        for company in major_companies:
+            pattern = rf'({company})(?:\s+\w+){{0,10}}(?:developed|launched|announced|invested|acquired|released|pioneered)'
+            matches = re.finditer(pattern, text, re.IGNORECASE)
+            for match in matches:
+                context_start = max(0, match.start() - 100)
+                context_end = min(len(text), match.end() + 100)
+                context = text[context_start:context_end].strip()
+                
+                companies.append({
+                    "name": company,
+                    "context": context,
+                    "is_major": True
+                })
         
-        company_counts = Counter(companies)
-        unique_companies = [comp for comp, count in company_counts.most_common(15)]
+        # Find other companies
+        company_pattern = r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:\s+(?:Inc|Corp|Ltd|LLC|Technologies|Labs|Systems|Solutions|AI)))\b'
+        other_companies = re.findall(company_pattern, text)
         
-        return unique_companies
+        company_counts = Counter(other_companies)
+        for comp, count in company_counts.most_common(20):
+            if comp not in [c["name"] for c in companies]:
+                companies.append({
+                    "name": comp,
+                    "mentions": count,
+                    "is_major": False
+                })
+        
+        return companies
     
-    def _extract_recent_developments(self, text: str, domain: str, country: str) -> List[Dict]:
-        """Extract developments from recent years (2020-2025)"""
+    def _extract_dated_developments(self, text: str, domain: str, country: str) -> List[Dict]:
+        """Extract developments with specific dates"""
         developments = []
         sentences = re.split(r'[.!?]+', text)
         
-        recent_years = [str(year) for year in range(2020, self.current_year + 2)]
+        # Recent years
+        recent_years = list(range(2020, self.current_year + 2))
         
-        development_keywords = [
+        # Action keywords
+        action_keywords = [
             "launched", "announced", "developed", "released", "introduced",
-            "breakthrough", "innovation", "established", "created", "unveiled",
-            "invested", "acquired", "partnership", "collaboration"
+            "unveiled", "established", "created", "invested", "acquired",
+            "signed", "approved", "implemented", "initiated"
         ]
         
         for sentence in sentences:
-            has_recent_year = any(year in sentence for year in recent_years)
-            has_development_keyword = any(kw in sentence.lower() for kw in development_keywords)
-            is_relevant = domain.lower() in sentence.lower() or any(tech_kw in sentence.lower() for tech_kw in ['ai', 'artificial', 'technology', 'innovation'])
+            # Must have year
+            year_match = re.search(r'\b(20\d{2})\b', sentence)
+            if not year_match:
+                continue
             
-            if has_recent_year and has_development_keyword and is_relevant and len(sentence.strip()) > 40:
-                year_match = re.search(r'(20\d{2})', sentence)
-                year = year_match.group(1) if year_match else "Recent"
+            year = int(year_match.group(1))
+            if year not in recent_years:
+                continue
+            
+            # Must have action
+            if not any(kw in sentence.lower() for kw in action_keywords):
+                continue
+            
+            # Should be relevant
+            is_relevant = (
+                domain.lower() in sentence.lower() or
+                country.lower() in sentence.lower() or
+                any(tech in sentence.lower() for tech in ["technology", "ai", "innovation", "research"])
+            )
+            
+            if is_relevant and len(sentence.strip()) > 50:
+                # Extract funding if present
+                funding_match = re.search(r'\$(\d+(?:\.\d+)?)\s*(billion|million)', sentence)
+                funding = f"${funding_match.group(1)}{funding_match.group(2)[0].upper()}" if funding_match else None
                 
                 developments.append({
                     "year": year,
-                    "description": sentence.strip()[:200]
+                    "description": sentence.strip()[:250],
+                    "funding": funding
                 })
-                
-                if len(developments) >= 10:
-                    break
         
+        # Sort by year (newest first)
         developments.sort(key=lambda x: x["year"], reverse=True)
         return developments
     
-    def _generate_summary(self, country: str, domain: str, text: str, recent_developments: List[Dict]) -> str:
-        """Generate country summary focusing on recent achievements"""
-        if recent_developments:
-            latest_dev = recent_developments[0]["description"][:300]
-            summary = f"{country}'s {domain} sector: {latest_dev}"
-        else:
-            sentences = re.split(r'[.!?]+', text)
-            relevant_sentences = []
-            
-            for sentence in sentences[:100]:
-                if country.lower() in sentence.lower() and domain.lower() in sentence.lower():
-                    if len(sentence.strip()) > 50:
-                        relevant_sentences.append(sentence.strip())
-            
-            if relevant_sentences:
-                summary = relevant_sentences[0][:400]
-            else:
-                summary = f"{country} is actively developing its {domain} capabilities through various initiatives and technological advancements."
+    def _generate_evidence_summary(
+        self, 
+        country: str, 
+        domain: str, 
+        metrics: Dict,
+        companies: List[Dict],
+        developments: List[Dict]
+    ) -> str:
+        """Generate summary based on concrete evidence"""
+        summary_parts = []
         
-        return summary[:500]
+        # Start with country and domain
+        summary_parts.append(f"{country} in {domain}:")
+        
+        # Add funding info
+        if metrics["funding_amounts"]:
+            top_funding = sorted(metrics["funding_amounts"], 
+                               key=lambda x: float(x.replace('$','').replace('B','').replace('M','').replace('T','')),
+                               reverse=True)[:3]
+            summary_parts.append(f"Notable funding includes {', '.join(top_funding)}.")
+        
+        # Add major companies
+        major_companies = [c["name"] for c in companies if c.get("is_major", False)]
+        if major_companies:
+            summary_parts.append(f"Major players include {', '.join(major_companies[:5])}.")
+        
+        # Add recent development
+        if developments:
+            latest = developments[0]
+            summary_parts.append(f"Recent: {latest['description'][:200]}")
+        
+        # Add market metrics
+        if metrics["market_size"]:
+            summary_parts.append(f"Market size: {metrics['market_size'][0]}.")
+        
+        if metrics["growth_rates"]:
+            summary_parts.append(f"Growth rate: {metrics['growth_rates'][0]}.")
+        
+        return " ".join(summary_parts)[:600]
     
     def _extract_key_entities(self, text: str, country: str) -> List[str]:
-        """Extract key organizations, institutions, and entities"""
+        """Extract organizations and institutions"""
         entities = []
         
-        capitalized_pattern = r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,4})\b'
-        matches = re.findall(capitalized_pattern, text)
+        # Universities and research institutes
+        edu_pattern = r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:University|Institute|College|Laboratory|Lab|Research Center))\b'
+        edu_matches = re.findall(edu_pattern, text)
+        entities.extend(list(set(edu_matches))[:5])
         
-        entity_counts = Counter(matches)
-        
-        common_words = {'United States', 'New York', 'Retrieved', 'Press', 'The Times', 
-                       'Retrieved July', 'Retrieved August', 'Retrieved March', 'Press Information'}
-        
-        entities = [entity for entity, count in entity_counts.most_common(20) 
-                   if entity != country and len(entity.split()) <= 4 
-                   and entity not in common_words
-                   and count >= 2]
+        # Government bodies
+        gov_pattern = r'\b((?:Ministry|Department|Agency|Commission|Bureau)\s+of\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b'
+        gov_matches = re.findall(gov_pattern, text)
+        entities.extend(list(set(gov_matches))[:3])
         
         return entities[:8]
     
     def _extract_highlights(self, text: str, domain: str, country: str) -> List[Dict]:
-        """Extract recent news and highlights"""
+        """Extract newsworthy highlights"""
         sentences = re.split(r'[.!?]+', text)
         highlights = []
         
-        keywords = ["announced", "launched", "developed", "breakthrough", "innovation", 
-                   "investment", "partnership", "acquired", "released", "unveiled"]
+        news_keywords = [
+            "announced", "launched", "breakthrough", "first", "largest",
+            "leading", "pioneering", "revolutionary", "milestone"
+        ]
         
-        for sentence in sentences:
-            if any(kw in sentence.lower() for kw in keywords):
-                is_relevant = domain.lower() in sentence.lower() or country.lower() in sentence.lower()
+        for sentence in sentences[:200]:
+            if any(kw in sentence.lower() for kw in news_keywords):
                 has_year = bool(re.search(r'20\d{2}', sentence))
+                is_relevant = (domain.lower() in sentence.lower() or 
+                             country.lower() in sentence.lower())
                 
-                if is_relevant and len(sentence.strip()) > 50:
+                if is_relevant and len(sentence.strip()) > 60:
                     highlights.append({
-                        "source": "Research Data",
-                        "headline": sentence.strip()[:180] + "...",
+                        "source": "Analysis",
+                        "headline": sentence.strip()[:200],
                         "recent": has_year
                     })
                     
-                    if len(highlights) >= 5:
+                    if len(highlights) >= 8:
                         break
         
-        highlights.sort(key=lambda x: x.get("recent", False), reverse=True)
-        return highlights
+        return sorted(highlights, key=lambda x: x["recent"], reverse=True)
     
-    def _generate_comparison(
-        self, 
-        country1: str, 
-        country2: str, 
+    def _generate_evidence_based_comparison(
+        self,
+        country1: str,
+        country2: str,
         domain: str,
-        analysis1: Dict, 
+        analysis1: Dict,
         analysis2: Dict
     ) -> Dict:
-        """Generate fair comparison using normalized metrics"""
+        """Compare based on concrete evidence"""
         comparison = {}
         
-        for category in self.tech_keywords.keys():
-            score1 = analysis1["normalized_scores"].get(category, 0)
-            score2 = analysis2["normalized_scores"].get(category, 0)
-            
-            diff_percent = abs(score1 - score2) / max(score1, score2, 1) * 100
-            
-            if diff_percent > 30:
-                if score1 > score2:
-                    comparison[f"{category}_activity"] = f"{country1} shows stronger {category} focus (normalized score: {score1} vs {score2})"
-                else:
-                    comparison[f"{category}_activity"] = f"{country2} shows stronger {category} focus (normalized score: {score2} vs {score1})"
-            elif diff_percent > 10:
-                if score1 > score2:
-                    comparison[f"{category}_activity"] = f"{country1} leads slightly in {category} (score: {score1} vs {score2})"
-                else:
-                    comparison[f"{category}_activity"] = f"{country2} leads slightly in {category} (score: {score2} vs {score1})"
+        metrics1 = analysis1["concrete_metrics"]
+        metrics2 = analysis2["concrete_metrics"]
+        
+        # Compare funding
+        funding1 = self._get_max_funding(metrics1["funding_amounts"])
+        funding2 = self._get_max_funding(metrics2["funding_amounts"])
+        
+        if funding1 > 0 or funding2 > 0:
+            if funding1 > funding2 * 1.5:
+                comparison["funding"] = f"{country1} shows significantly higher funding ({self._format_amount(funding1)} vs {self._format_amount(funding2)})"
+            elif funding2 > funding1 * 1.5:
+                comparison["funding"] = f"{country2} shows significantly higher funding ({self._format_amount(funding2)} vs {self._format_amount(funding1)})"
             else:
-                comparison[f"{category}_activity"] = f"Similar {category} activity levels (score: {score1} vs {score2})"
+                comparison["funding"] = f"Comparable funding levels ({self._format_amount(funding1)} vs {self._format_amount(funding2)})"
         
-        companies1 = len(analysis1.get("companies", []))
-        companies2 = len(analysis2.get("companies", []))
-        comparison["companies_mentioned"] = f"{country1}: {companies1} organizations | {country2}: {companies2} organizations"
+        # Compare companies
+        major1 = len([c for c in analysis1["companies"] if c.get("is_major", False)])
+        major2 = len([c for c in analysis2["companies"] if c.get("is_major", False)])
         
-        dev1 = len(analysis1.get("recent_developments", []))
-        dev2 = len(analysis2.get("recent_developments", []))
-        comparison["recent_developments"] = f"{country1}: {dev1} recent initiatives | {country2}: {dev2} recent initiatives"
+        if major1 > 0 or major2 > 0:
+            comparison["major_companies"] = f"{country1}: {major1} major tech companies | {country2}: {major2} major tech companies"
+        
+        # Compare patents
+        if metrics1["patent_counts"] or metrics2["patent_counts"]:
+            patents1 = max([int(p.replace(',','')) for p in metrics1["patent_counts"]], default=0)
+            patents2 = max([int(p.replace(',','')) for p in metrics2["patent_counts"]], default=0)
+            
+            if patents1 > 0 or patents2 > 0:
+                comparison["patents"] = f"Patent activity: {country1} ({patents1:,}) vs {country2} ({patents2:,})"
+        
+        # Compare recent activity
+        dev1 = len(analysis1["recent_developments"])
+        dev2 = len(analysis2["recent_developments"])
+        comparison["recent_activity"] = f"Recent developments: {country1} ({dev1}) vs {country2} ({dev2})"
+        
+        # Compare market size
+        market1 = self._get_max_market(metrics1["market_size"])
+        market2 = self._get_max_market(metrics2["market_size"])
+        
+        if market1 > 0 or market2 > 0:
+            comparison["market_size"] = f"Market size: {country1} ({self._format_amount(market1)}) vs {country2} ({self._format_amount(market2)})"
+        
+        # Compare growth
+        if metrics1["growth_rates"] or metrics2["growth_rates"]:
+            growth1 = max([float(g.replace('%','')) for g in metrics1["growth_rates"]], default=0)
+            growth2 = max([float(g.replace('%','')) for g in metrics2["growth_rates"]], default=0)
+            
+            if growth1 > 0 or growth2 > 0:
+                comparison["growth"] = f"Growth rates: {country1} ({growth1}%) vs {country2} ({growth2}%)"
         
         return comparison
     
-    def _generate_overall_analysis(
-        self, 
-        country1: str, 
-        country2: str, 
+    def _generate_balanced_conclusion(
+        self,
+        country1: str,
+        country2: str,
         domain: str,
         analysis1: Dict,
         analysis2: Dict,
         comparison: Dict
     ) -> str:
-        """Generate balanced overall analysis based on evidence"""
+        """Generate evidence-based conclusion"""
         
-        funding1 = analysis1.get("numerical_data", {}).get("funding", [])
-        funding2 = analysis2.get("numerical_data", {}).get("funding", [])
+        # Score countries based on concrete evidence
+        score1 = 0
+        score2 = 0
+        evidence = []
         
-        max_funding1 = self._extract_max_funding(funding1)
-        max_funding2 = self._extract_max_funding(funding2)
+        metrics1 = analysis1["concrete_metrics"]
+        metrics2 = analysis2["concrete_metrics"]
         
-        companies1 = analysis1.get("companies", [])
-        companies2 = analysis2.get("companies", [])
+        # Funding comparison
+        funding1 = self._get_max_funding(metrics1["funding_amounts"])
+        funding2 = self._get_max_funding(metrics2["funding_amounts"])
         
-        major_tech_companies = {
-            'Google', 'Microsoft', 'Amazon', 'Apple', 'Meta', 'Facebook', 
-            'IBM', 'Intel', 'NVIDIA', 'OpenAI', 'DeepMind', 'Tesla', 'Anthropic'
-        }
+        if funding1 > funding2 * 1.5:
+            score1 += 2
+            evidence.append(f"{country1} has higher documented funding levels")
+        elif funding2 > funding1 * 1.5:
+            score2 += 2
+            evidence.append(f"{country2} has higher documented funding levels")
         
-        major_companies1 = [c for c in companies1 if any(mc in c for mc in major_tech_companies)]
-        major_companies2 = [c for c in companies2 if any(mc in c for mc in major_tech_companies)]
+        # Major companies
+        major1 = len([c for c in analysis1["companies"] if c.get("is_major", False)])
+        major2 = len([c for c in analysis2["companies"] if c.get("is_major", False)])
         
-        dev1 = len(analysis1.get("recent_developments", []))
-        dev2 = len(analysis2.get("recent_developments", []))
+        if major1 > major2 * 1.3:
+            score1 += 2
+            evidence.append(f"{country1} has more global tech leaders ({major1} vs {major2})")
+        elif major2 > major1 * 1.3:
+            score2 += 2
+            evidence.append(f"{country2} has more global tech leaders ({major2} vs {major1})")
         
-        evidence_points = {country1: [], country2: []}
-        
-        if max_funding1 and max_funding2:
-            if max_funding1 > max_funding2 * 2:
-                evidence_points[country1].append(f"significantly higher funding levels (up to {self._format_funding(max_funding1)} vs {self._format_funding(max_funding2)})")
-            elif max_funding2 > max_funding1 * 2:
-                evidence_points[country2].append(f"significantly higher funding levels (up to {self._format_funding(max_funding2)} vs {self._format_funding(max_funding1)})")
-        
-        if len(major_companies1) > len(major_companies2) * 1.5:
-            evidence_points[country1].append(f"more global tech leaders ({len(major_companies1)} vs {len(major_companies2)})")
-        elif len(major_companies2) > len(major_companies1) * 1.5:
-            evidence_points[country2].append(f"more global tech leaders ({len(major_companies2)} vs {len(major_companies1)})")
+        # Recent developments
+        dev1 = len(analysis1["recent_developments"])
+        dev2 = len(analysis2["recent_developments"])
         
         if dev1 > dev2 * 1.3:
-            evidence_points[country1].append(f"more documented recent developments ({dev1} vs {dev2})")
+            score1 += 1
+            evidence.append(f"{country1} shows more recent activity ({dev1} vs {dev2} developments)")
         elif dev2 > dev1 * 1.3:
-            evidence_points[country2].append(f"more documented recent developments ({dev2} vs {dev1})")
+            score2 += 1
+            evidence.append(f"{country2} shows more recent activity ({dev2} vs {dev1} developments)")
         
-        total_points1 = len(evidence_points[country1])
-        total_points2 = len(evidence_points[country2])
+        # Patents
+        patents1 = max([int(p.replace(',','')) for p in metrics1["patent_counts"]], default=0)
+        patents2 = max([int(p.replace(',','')) for p in metrics2["patent_counts"]], default=0)
         
-        if total_points1 > total_points2:
+        if patents1 > patents2 * 1.5:
+            score1 += 1
+            evidence.append(f"{country1} has higher patent activity")
+        elif patents2 > patents1 * 1.5:
+            score2 += 1
+            evidence.append(f"{country2} has higher patent activity")
+        
+        # Generate conclusion
+        if score1 > score2 + 1:
             leader = country1
             follower = country2
-            leader_evidence = evidence_points[country1]
-        elif total_points2 > total_points1:
+        elif score2 > score1 + 1:
             leader = country2
             follower = country1
-            leader_evidence = evidence_points[country2]
         else:
-            return (f"Both {country1} and {country2} show strong capabilities in {domain}. "
-                   f"{country1} features {len(major_companies1)} major tech organizations and {dev1} recent developments, "
-                   f"while {country2} has {len(major_companies2)} major tech organizations and {dev2} recent developments. "
-                   f"Each country demonstrates distinct strengths across different dimensions of {domain} development.")
+            # Balanced
+            return (
+                f"Both {country1} and {country2} demonstrate strong capabilities in {domain}. "
+                f"The analysis shows competitive positioning across multiple dimensions:\n\n"
+                f"• {country1}: {major1} major tech companies, {dev1} recent developments\n"
+                f"• {country2}: {major2} major tech companies, {dev2} recent developments\n\n"
+                f"Each country has distinct strengths, and the comparison depends on specific metrics prioritized. "
+                f"Note: Analysis based on publicly available Wikipedia data as of {datetime.now().strftime('%B %Y')}."
+            )
         
-        evidence_str = ", ".join(leader_evidence) if leader_evidence else "multiple factors"
+        # Leader conclusion
+        conclusion = (
+            f"Based on documented evidence, {leader} demonstrates stronger indicators in {domain}:\n\n"
+        )
         
-        analysis = (f"Based on analysis of documented evidence, {leader} demonstrates stronger indicators "
-                   f"in {domain}, particularly in {evidence_str}. "
-                   f"{leader} benefits from {', '.join(major_companies2 if leader == country2 else major_companies1) if (major_companies2 if leader == country2 else major_companies1) else 'significant industry presence'}. "
-                   f"\n\n{follower} continues developing its {domain} capabilities through government initiatives and growing industry participation. "
-                   f"Note: This analysis is based on publicly available Wikipedia data and represents documented information rather than comprehensive capability assessment.")
+        for ev in evidence:
+            if leader in ev:
+                conclusion += f"• {ev}\n"
         
-        return analysis
+        conclusion += (
+            f"\n{follower} continues to develop its {domain} capabilities with "
+            f"{dev2 if leader == country1 else dev1} recent initiatives documented. "
+            f"\n\n**Important Context:**\n"
+            f"• This analysis is based on publicly available Wikipedia data\n"
+            f"• Data completeness varies by country (source relevance: {analysis1['avg_relevance']:.1f}/10 vs {analysis2['avg_relevance']:.1f}/10)\n"
+            f"• Results represent documented information, not comprehensive capability assessment\n"
+            f"• Some countries may have less comprehensive English-language documentation"
+        )
+        
+        return conclusion
     
-    def _extract_max_funding(self, funding_list: List[str]) -> float:
-        """Extract maximum funding amount in billions"""
-        max_funding = 0.0
+    def _add_quality_assessment(self, result: Dict, data1: Dict, data2: Dict) -> Dict:
+        """Add data quality warnings and confidence scores"""
+        warnings = []
+        
+        # Check data volumes
+        text1 = sum(len(t) for t in data1.get("raw_text", []))
+        text2 = sum(len(t) for t in data2.get("raw_text", []))
+        
+        if text1 < 3000:
+            warnings.append(f"Limited data for {list(result['summary'].keys())[0]} - comparison may be incomplete")
+        if text2 < 3000:
+            warnings.append(f"Limited data for {list(result['summary'].keys())[1]} - comparison may be incomplete")
+        
+        # Check data balance
+        ratio = max(text1, text2) / max(min(text1, text2), 1)
+        if ratio > 2.5:
+            warnings.append(f"Data imbalance detected ({ratio:.1f}x difference) - may affect comparison fairness")
+        
+        # Check relevance scores
+        relevance1 = sum(data1.get("relevance_scores", [0])) / max(len(data1.get("relevance_scores", [0])), 1)
+        relevance2 = sum(data2.get("relevance_scores", [0])) / max(len(data2.get("relevance_scores", [0])), 1)
+        
+        if relevance1 < 3.0 or relevance2 < 3.0:
+            warnings.append("Some sources have low relevance scores - findings may be less specific")
+        
+        # Check if meaningful differences exist
+        metrics1 = result["concrete_metrics"][list(result['summary'].keys())[0]]
+        metrics2 = result["concrete_metrics"][list(result['summary'].keys())[1]]
+        
+        has_concrete = (
+            metrics1["funding_amounts"] or metrics2["funding_amounts"] or
+            metrics1["patent_counts"] or metrics2["patent_counts"] or
+            metrics1["market_size"] or metrics2["market_size"]
+        )
+        
+        if not has_concrete:
+            warnings.append("Limited concrete metrics found - analysis relies more on qualitative factors")
+        
+        # Confidence scoring
+        if not warnings:
+            confidence = "high"
+        elif len(warnings) <= 2:
+            confidence = "medium"
+        else:
+            confidence = "low"
+        
+        result["data_quality"] = {
+            "warnings": warnings,
+            "confidence": confidence,
+            "sources": {
+                list(result['summary'].keys())[0]: len(data1.get("raw_text", [])),
+                list(result['summary'].keys())[1]: len(data2.get("raw_text", []))
+            },
+            "relevance_scores": {
+                list(result['summary'].keys())[0]: round(relevance1, 2),
+                list(result['summary'].keys())[1]: round(relevance2, 2)
+            }
+        }
+        
+        return result
+    
+    def _get_max_funding(self, funding_list: List[str]) -> float:
+        """Get maximum funding in billions"""
+        max_val = 0.0
         for item in funding_list:
             try:
-                value_str = item.replace('$', '').replace(',', '').strip()
-                if 'billion' in value_str.lower():
-                    value = float(value_str.split()[0])
-                    max_funding = max(max_funding, value)
-                elif 'million' in value_str.lower():
-                    value = float(value_str.split()[0]) / 1000
-                    max_funding = max(max_funding, value)
-            except (ValueError, IndexError):
+                val_str = item.replace('$', '').strip()
+                if 'B' in val_str:
+                    val = float(val_str.replace('B', ''))
+                elif 'M' in val_str:
+                    val = float(val_str.replace('M', '')) / 1000
+                elif 'T' in val_str:
+                    val = float(val_str.replace('T', '')) * 1000
+                else:
+                    continue
+                max_val = max(max_val, val)
+            except (ValueError, AttributeError):
                 continue
-        return max_funding
+        return max_val
     
-    def _format_funding(self, amount_billions: float) -> str:
-        """Format funding amount for display"""
-        if amount_billions >= 1:
-            return f"${amount_billions:.1f}B"
+    def _get_max_market(self, market_list: List[str]) -> float:
+        """Get maximum market size in billions"""
+        return self._get_max_funding(market_list)
+    
+    def _format_amount(self, amount: float) -> str:
+        """Format monetary amount"""
+        if amount == 0:
+            return "N/A"
+        elif amount >= 1:
+            return f"${amount:.1f}B"
         else:
-            return f"${amount_billions * 1000:.0f}M"
+            return f"${amount * 1000:.0f}M"
