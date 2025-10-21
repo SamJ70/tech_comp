@@ -86,6 +86,7 @@ async def compare_countries(request: ComparisonRequest):
             "domain": request.domain,
             "countries": [request.country1, request.country2],
             "summary": analysis["summary"],
+            "metrics": analysis["metrics"],
             "comparison": analysis["comparison"],
             "overall_analysis": analysis["overall_analysis"],
             "resources": analysis["resources"],

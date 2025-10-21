@@ -29,7 +29,40 @@ class DocumentGenerator:
         
         doc.add_page_break()
         
-        self._add_section_header(doc, f"{country1} - Overview")
+        self._add_section_header(doc, "Key Metrics Comparison")
+        metrics = analysis.get("metrics", {})
+        if metrics:
+            table = doc.add_table(rows=1, cols=3)
+            table.style = 'Light Grid Accent 1'
+            
+            header_cells = table.rows[0].cells
+            header_cells[0].text = "Metric"
+            header_cells[1].text = country1
+            header_cells[2].text = country2
+            
+            for header_cell in header_cells:
+                for paragraph in header_cell.paragraphs:
+                    paragraph.runs[0].font.bold = True
+            
+            metrics1 = metrics.get(country1, {})
+            metrics2 = metrics.get(country2, {})
+            
+            metric_labels = {
+                "total_companies_mentioned": "Organizations Mentioned",
+                "recent_developments_count": "Recent Developments",
+                "normalized_activity_score": "Activity Score (normalized)",
+                "text_coverage": "Data Coverage (chars)"
+            }
+            
+            for key, label in metric_labels.items():
+                row = table.add_row()
+                row.cells[0].text = label
+                row.cells[1].text = str(metrics1.get(key, "N/A"))
+                row.cells[2].text = str(metrics2.get(key, "N/A"))
+        
+        doc.add_paragraph()
+        
+        self._add_section_header(doc, f"{country1} - Detailed Analysis")
         summary1 = analysis.get("summary", {}).get(country1, "No data available.")
         doc.add_paragraph(summary1)
         
@@ -37,13 +70,13 @@ class DocumentGenerator:
         resources1 = analysis.get("resources", {}).get(country1, [])
         if resources1:
             for resource in resources1:
-                p = doc.add_paragraph(resource, style='List Bullet')
+                doc.add_paragraph(resource, style='List Bullet')
         else:
             doc.add_paragraph("Information not available.")
         
         doc.add_paragraph()
         
-        self._add_section_header(doc, f"{country2} - Overview")
+        self._add_section_header(doc, f"{country2} - Detailed Analysis")
         summary2 = analysis.get("summary", {}).get(country2, "No data available.")
         doc.add_paragraph(summary2)
         
@@ -51,13 +84,13 @@ class DocumentGenerator:
         resources2 = analysis.get("resources", {}).get(country2, [])
         if resources2:
             for resource in resources2:
-                p = doc.add_paragraph(resource, style='List Bullet')
+                doc.add_paragraph(resource, style='List Bullet')
         else:
             doc.add_paragraph("Information not available.")
         
         doc.add_page_break()
         
-        self._add_section_header(doc, "Comparative Analysis")
+        self._add_section_header(doc, "Comparative Analysis by Category")
         
         comparison = analysis.get("comparison", {})
         if comparison:
@@ -88,20 +121,28 @@ class DocumentGenerator:
                 p = doc.add_paragraph(style='List Bullet')
                 source = item.get("source", "Unknown Source")
                 headline = item.get("headline", "No headline available")
-                p.add_run(f"{source}: ").bold = True
+                year_indicator = " [Recent]" if item.get("recent", False) else ""
+                p.add_run(f"{source}{year_indicator}: ").bold = True
                 p.add_run(headline)
         else:
             doc.add_paragraph("No recent news items found.")
         
         doc.add_page_break()
         
-        self._add_section_header(doc, "Methodology")
+        self._add_section_header(doc, "Methodology & Data Quality")
         methodology_text = (
             f"This report was generated through autonomous data collection and analysis from publicly available sources. "
-            f"The analysis includes web scraping of technology news, research publications, government initiatives, "
-            f"and organizational data related to {domain} in both {country1} and {country2}. "
-            f"\n\nThe comparison is based on keyword frequency analysis, entity extraction, and pattern recognition "
-            f"across multiple data sources. Results should be considered as indicative trends rather than definitive metrics."
+            f"The analysis includes web scraping of Wikipedia articles related to {domain} in both {country1} and {country2}. "
+            f"\n\n**Analysis Approach:**\n"
+            f"- Normalized keyword frequency analysis (per 10,000 characters) to ensure fair comparison regardless of source text length\n"
+            f"- Extraction of numerical data including funding amounts, company counts, and growth metrics\n"
+            f"- Focus on recent developments (2020-{datetime.now().year}) to capture current state\n"
+            f"- Entity recognition to identify key organizations and institutions\n"
+            f"\n**Important Notes:**\n"
+            f"- This analysis is based on publicly available Wikipedia data and may not reflect complete or classified information\n"
+            f"- Comparisons are normalized to account for data availability differences between countries\n"
+            f"- Results should be considered as indicative trends based on documented information rather than definitive metrics\n"
+            f"- Some countries may have more comprehensive Wikipedia coverage, which is accounted for in normalization"
         )
         doc.add_paragraph(methodology_text)
         
