@@ -1,0 +1,124 @@
+Title: Build Autonomous Backend for Country-Tech Domain Comparative Intelligence
+
+Instruction:
+Build a backend-only application (no frontend, no UI) that automatically compares the technological progress of two countries in a given tech domain (e.g., AI, renewable energy, robotics, biotech, quantum computing, etc.).
+
+🎯 Core Functionality
+
+Input API:
+
+/compare endpoint (POST).
+
+Accepts a JSON body:
+
+{
+  "country1": "India",
+  "country2": "USA",
+  "domain": "Artificial Intelligence"
+}
+
+
+Backend Tasks:
+
+Automatically fetch and analyze up-to-date information about both countries in the specified domain.
+
+Use web scraping + open data sources (like Wikipedia, news, tech journals, patents, research institutes, funding data, government initiatives, and reports).
+
+No API keys or paid APIs — only free and open sources accessible via HTTP requests and scraping.
+
+Extract and summarize details like:
+
+Major companies, startups, and institutes in that field.
+
+Key government policies, research programs, and investments.
+
+Number of research papers, innovation index, and patent activity.
+
+Recent news and advancements.
+
+Collaboration networks (industry + academia).
+
+Strengths, weaknesses, and focus areas.
+
+Analytical Logic:
+
+Compare both countries across multiple measurable and qualitative parameters.
+
+Produce a structured output that includes:
+
+Country-wise summaries.
+
+Comparative analysis table.
+
+Domain-specific leadership insights (who is ahead in what, and why).
+
+Current research directions and future potential.
+
+Use natural language summarization to make the analysis readable and explanatory.
+
+Output Format (example):
+
+{
+  "domain": "Artificial Intelligence",
+  "summary": {
+    "India": "India has rapidly scaled AI initiatives through Digital India and IIT-led research...",
+    "USA": "The USA maintains dominance via private sector R&D led by OpenAI, Google, etc..."
+  },
+  "comparison": {
+    "research_activity": "USA leads with 3x publications",
+    "government_initiatives": "India catching up via national AI strategy",
+    "industry_investment": "USA far ahead due to venture funding",
+    "public_adoption": "India growing fast due to digital economy initiatives"
+  },
+  "overall_analysis": "While the USA currently leads in industrial AI innovation, India is progressing fast in public policy adoption...",
+  "resources": {
+    "India": ["AI4Bharat", "NITI Aayog AI Strategy", "IIT Research Labs"],
+    "USA": ["OpenAI", "Stanford AI Lab", "DARPA Projects"]
+  },
+  "news": [
+    {"source": "TechCrunch", "headline": "India launches AI Mission 2025"},
+    {"source": "MIT Tech Review", "headline": "US AI firms dominate global investment"}
+  ]
+}
+
+🧠 Implementation Details
+
+Use Python (FastAPI) for backend framework.
+
+Include a logic layer with these modules:
+
+DataFetcher: uses async web scraping (e.g., httpx, aiohttp, BeautifulSoup4) to collect and clean data.
+
+DataAnalyzer: performs keyword extraction, summarization, and comparison logic using transformers (like distilbart, t5-small, or any free local model).
+
+Comparator: synthesizes structured comparison tables.
+
+Summarizer: converts raw text into readable, analytical summaries.
+
+Cache/DB (optional): lightweight SQLite or JSON storage for saving results.
+
+Handle errors gracefully: if a site blocks access, skip and continue with available data.
+
+Must run autonomously with no need for user-provided API keys.
+
+Do not focus on frontend or UI — backend endpoints and data pipeline only.
+
+Include clear file structure, documentation (README.md), and instructions for running locally (uvicorn main:app --reload).
+
+⚙️ Bonus (if possible)
+
+Auto-detect synonyms of the domain (e.g., “AI” → “Artificial Intelligence”, “Machine Learning”).
+
+Include timeline insights (how progress evolved over past 5 years).
+
+Return both structured JSON and human-readable text summary.
+
+🧩 Deliverables
+
+Fully functional backend code (FastAPI preferred).
+
+Automatically performs scraping, analysis, and output formatting.
+
+Can run locally without any manual setup or API key.
+
+Provides a complete comparison between two countries for any given tech domain.
