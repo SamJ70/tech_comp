@@ -1,198 +1,243 @@
-import asyncio
-import httpx
-from bs4 import BeautifulSoup
-import trafilatura
-from typing import Dict, List
-import re
+# backend/app/services/enhanced_data_fetcher.py
+import requests
+from typing import Dict, List, Any, Optional
+from app.config import NEWSAPI_KEY
+import time
+from datetime import datetime
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
+# country detection helpers
+try:
+    import pycountry
+    _COUNTRY_NAMES = [c.name for c in pycountry.countries]
+except Exception:
+    _COUNTRY_NAMES = [
+        "United States","China","India","United Kingdom","Germany","Japan","South Korea",
+        "France","Canada","Israel","Singapore","Australia","Brazil","Russia","Netherlands"
+    ]
+
 class EnhancedDataFetcher:
-    def __init__(self):
-        self.timeout = 30.0
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-        self.max_concurrent = 5
-    
-    async def fetch_country_tech_data(self, country: str, domain: str) -> Dict:
-        """Enhanced multi-source data collection"""
-        async with httpx.AsyncClient(timeout=self.timeout, headers=self.headers) as client:
-            # Create fetch tasks
-            tasks = [
-                self._fetch_wikipedia_data(country, domain, client),
-                self._fetch_news_data(country, domain, client),
-                self._fetch_additional_sources(country, domain, client)
-            ]
-            
-            # Execute in parallel
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Combine results
-            combined_data = {
-                "raw_text": [],
-                "sources": [],
-                "relevance_scores": [],
-                "metadata": {}
-            }
-            
-            for result in results:
-                if isinstance(result, dict):
-                    combined_data["raw_text"].extend(result.get("raw_text", []))
-                    combined_data["sources"].extend(result.get("sources", []))
-                    combined_data["relevance_scores"].extend(result.get("relevance_scores", []))
-            
-            logger.info(f"Fetched {len(combined_data['raw_text'])} sources for {country}")
-            return combined_data
-    
-    async def _fetch_wikipedia_data(self, country: str, domain: str, client: httpx.AsyncClient) -> Dict:
-        """Fetch from Wikipedia with improved queries"""
-        data = {"raw_text": [], "sources": [], "relevance_scores": []}
-        
-        # Generate smart search queries
-        queries = self._generate_wiki_queries(country, domain)
-        
-        for query in queries[:5]:  # Limit to 5 queries
-            try:
-                # Search Wikipedia
-                search_url = "https://en.wikipedia.org/w/api.php"
-                params = {
-                    "action": "opensearch",
-                    "search": query,
-                    "limit": 3,
-                    "namespace": 0,
-                    "format": "json"
-                }
-                
-                response = await client.get(search_url, params=params)
-                if response.status_code == 200:
-                    search_results = response.json()
-                    if len(search_results) > 3:
-                        urls = search_results[3]
-                        
-                        # Fetch each article
-                        for url in urls[:2]:  # Top 2 results per query
-                            article_data = await self._fetch_article(url, country, domain, client)
-                            if article_data:
-                                data["raw_text"].append(article_data["text"])
-                                data["sources"].append(url)
-                                data["relevance_scores"].append(article_data["relevance"])
-                
-                await asyncio.sleep(0.5)  # Rate limiting
-            
-            except Exception as e:
-                logger.warning(f"Wikipedia fetch error for '{query}': {e}")
-        
-        return data
-    
-    async def _fetch_article(self, url: str, country: str, domain: str, client: httpx.AsyncClient) -> Dict:
-        """Fetch and process individual article"""
+    def __init__(self, config: Dict = None):
+        self.config = config or {}
+        self.crossref_base = "https://api.crossref.org/works"
+        self.europepmc_base = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+        self.newsapi_key = NEWSAPI_KEY or self.config.get("newsapi_key", "")
+        # lazy TIM/ASPI
         try:
-            response = await client.get(url)
-            if response.status_code != 200:
-                return None
-            
-            # Extract text using trafilatura
-            content = trafilatura.extract(response.text)
-            
-            if not content or len(content) < 300:
-                return None
-            
-            # Calculate relevance
-            relevance = self._calculate_relevance(content, country, domain)
-            
-            if relevance >= 2.0:
-                return {"text": content, "relevance": relevance}
-            
-            return None
-        
+            from app.services.tim_data_fetcher import TIMDataFetcher
+            from app.services.aspi_data_fetcher import ASPIDataFetcher
+            self.tim_fetcher = TIMDataFetcher(self.config.get("tim_export"))
+            self.aspi_fetcher = ASPIDataFetcher(self.config.get("aspi_export"))
         except Exception as e:
-            logger.warning(f"Article fetch error for {url}: {e}")
-            return None
-    
-    def _generate_wiki_queries(self, country: str, domain: str) -> List[str]:
-        """Generate intelligent Wikipedia search queries"""
-        queries = [
-            f"{country} {domain}",
-            f"{domain} in {country}",
-            f"{country} technology {domain}",
-            f"Science and technology in {country}",
-            f"{country} innovation"
-        ]
-        
-        # Domain-specific queries
-        domain_lower = domain.lower()
-        if "ai" in domain_lower or "artificial intelligence" in domain_lower:
-            queries.extend([
-                f"{country} artificial intelligence companies",
-                f"{country} machine learning research"
-            ])
-        elif "energy" in domain_lower:
-            queries.extend([
-                f"{country} renewable energy",
-                f"{country} clean technology"
-            ])
-        
-        return queries
-    
-    async def _fetch_news_data(self, country: str, domain: str, client: httpx.AsyncClient) -> Dict:
-        """Fetch recent news (placeholder for news API integration)"""
-        # In production, integrate with News API or similar service
-        return {"raw_text": [], "sources": [], "relevance_scores": []}
-    
-    async def _fetch_additional_sources(self, country: str, domain: str, client: httpx.AsyncClient) -> Dict:
-        """Fetch from additional sources (research papers, reports)"""
-        # In production, integrate with Google Scholar, arXiv, etc.
-        return {"raw_text": [], "sources": [], "relevance_scores": []}
-    
-    def _calculate_relevance(self, text: str, country: str, domain: str) -> float:
-        """Enhanced relevance scoring"""
-        score = 0.0
-        text_lower = text.lower()
-        
-        # Country mentions
-        country_count = text_lower.count(country.lower())
-        score += min(country_count * 0.3, 2.0)
-        
-        # Domain keywords
-        domain_terms = domain.lower().split() + self._get_domain_keywords(domain)
-        domain_count = sum(text_lower.count(term) for term in domain_terms)
-        score += min(domain_count * 0.2, 3.0)
-        
-        # Evidence keywords
-        evidence_terms = [
-            "research", "development", "company", "startup", "university",
-            "investment", "funding", "patent", "innovation", "launched"
-        ]
-        evidence_count = sum(1 for term in evidence_terms if term in text_lower)
-        score += min(evidence_count * 0.2, 2.0)
-        
-        # Recent years bonus
-        for year in ["2023", "2024", "2025"]:
-            if year in text:
-                score += 0.5
-        
-        # Length penalty/bonus
-        if len(text) < 500:
-            score *= 0.7
-        elif len(text) > 2000:
-            score += 0.5
-        
-        return score
-    
-    def _get_domain_keywords(self, domain: str) -> List[str]:
-        """Get related keywords for domain"""
-        keywords_map = {
-            "artificial intelligence": ["ai", "machine learning", "deep learning", "neural"],
-            "renewable energy": ["solar", "wind", "clean energy", "sustainable"],
-            "robotics": ["robot", "automation", "autonomous"],
-            "biotechnology": ["biotech", "genetic", "pharmaceutical", "biology"]
+            logger.info("TIM/ASPI fetchers not initialized: %s", e)
+            self.tim_fetcher = None
+            self.aspi_fetcher = None
+
+        # domain synonyms / keywords
+        self.domain_keyword_map = {
+            "Artificial Intelligence": ["artificial intelligence", "ai", "machine learning", "deep learning", "neural network", "transformer", "nlp", "computer vision"],
+            "Biotechnology": ["biotechnology", "bio", "biological", "genetic", "CRISPR", "gene editing", "vaccine"],
+            "Quantum Computing": ["quantum computing", "qubit", "quantum"],
+            "Space Technology": ["satellite", "rocket", "spacecraft", "launch", "satcom"],
+            "Robotics": ["robotics", "robot", "uav", "drone", "autonomous vehicle"],
+            "Cybersecurity": ["cybersecurity", "encryption", "cryptography", "malware", "vulnerability"]
         }
-        
-        domain_lower = domain.lower()
-        for key, keywords in keywords_map.items():
-            if key in domain_lower:
-                return keywords
-        
+
+    def fetch_country_tech_data(self, country: str, domain: str, years_back: Optional[int] = None) -> Dict[str, Any]:
+        results = {"publications": [], "patents": [], "news": [], "tim": [], "aspi": [], "raw_text": []}
+
+        # build expanded queries from domain map (deduplicate)
+        keywords = [domain]
+        for k in self.domain_keyword_map.get(domain, []):
+            if k not in keywords: keywords.append(k)
+
+        seen_urls = set()
+
+        # Query crossref for each keyword variant
+        for kw in keywords:
+            q = f"{kw} {country}"
+            try:
+                cr = self._fetch_crossref(q, years_back)
+                for item in cr:
+                    # enrich with detected countries (from affiliation or title/abstract)
+                    item["detected_countries"] = self._detect_countries_in_item(item, country)
+                    url = item.get("url")
+                    if url and url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+                    results["publications"].append(item)
+            except Exception as e:
+                logger.exception("CrossRef fetch error for query %s: %s", q, e)
+
+        # Europe PMC one pass (broad)
+        try:
+            ep = self._fetch_europepmc(f"{domain} {country}", years_back)
+            for item in ep:
+                item["detected_countries"] = self._detect_countries_in_item(item, country)
+                url = item.get("url")
+                if url and url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                results["publications"].append(item)
+        except Exception as e:
+            logger.exception("EuropePMC fetch error: %s", e)
+
+        # TIM & ASPI if present
+        if self.tim_fetcher:
+            try:
+                tim_items = self.tim_fetcher.fetch_tim_items(country, domain, years_back)
+                for it in tim_items:
+                    it["detected_countries"] = self._detect_countries_in_item(it, country)
+                    results["tim"].append(it)
+            except Exception as e:
+                logger.exception("TIM fetch error: %s", e)
+
+        if self.aspi_fetcher:
+            try:
+                aspi_items = self.aspi_fetcher.fetch_aspi_items(country, domain, years_back)
+                for it in aspi_items:
+                    it["detected_countries"] = self._detect_countries_in_item(it, country)
+                    results["aspi"].append(it)
+            except Exception as e:
+                logger.exception("ASPI fetch error: %s", e)
+
+        # NewsAPI (optional)
+        if self.newsapi_key:
+            try:
+                news = self._fetch_newsapi(f"{domain} {country}", years_back)
+                for it in news:
+                    it["detected_countries"] = self._detect_countries_in_item(it, country)
+                    results["news"].append(it)
+            except Exception as e:
+                logger.exception("NewsAPI fetch error: %s", e)
+
+        # patents stub (EPO OPS could be added here if you have credentials)
+        try:
+            patents = self._fetch_patents_stub(f"{domain} {country}", years_back)
+            for p in patents:
+                p["detected_countries"] = self._detect_countries_in_item(p, country)
+                results["patents"].append(p)
+        except Exception as e:
+            logger.exception("Patents fetch stub failed: %s", e)
+
+        # raw_text collects basic items for analyzer counts
+        for k in ("publications","patents","news","tim","aspi"):
+            results["raw_text"].extend(results.get(k, []))
+
+        return results
+
+    def _fetch_crossref(self, query: str, years_back: Optional[int] = None, rows=50) -> List[Dict]:
+        params = {"query.bibliographic": query, "rows": rows, "sort": "relevance"}
+        if years_back:
+            year_from = datetime.now().year - int(years_back) + 1
+            params["filter"] = f"from-pub-date:{year_from}"
+        r = requests.get(self.crossref_base, params=params, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+        out = []
+        for item in data.get("message", {}).get("items", []):
+            pub_year = None
+            if item.get("issued", {}).get("date-parts"):
+                pub_year = item["issued"]["date-parts"][0][0]
+            # extract affiliations if present
+            affiliations = []
+            authors = item.get("author", []) or []
+            for a in authors:
+                affs = a.get("affiliation") or []
+                if isinstance(affs, list):
+                    for af in affs:
+                        if isinstance(af, dict):
+                            affiliations.append(af.get("name"))
+                        else:
+                            affiliations.append(str(af))
+                elif isinstance(affs, dict):
+                    affiliations.append(affs.get("name"))
+            out.append({
+                "title": (item.get("title") or [""])[0],
+                "year": pub_year,
+                "url": item.get("URL"),
+                "source": "crossref",
+                "abstract": (item.get("abstract") or "")[:3000],
+                "affiliations": affiliations
+            })
+        return out
+
+    def _fetch_europepmc(self, query: str, years_back: Optional[int] = None, pageSize=25) -> List[Dict]:
+        params = {"query": query, "format": "json", "pageSize": pageSize}
+        if years_back:
+            year_from = datetime.now().year - int(years_back) + 1
+            params["query"] = f"{query} AFTER_YEAR:{year_from}"
+        r = requests.get(self.europepmc_base, params=params, timeout=20)
+        r.raise_for_status()
+        d = r.json()
+        out = []
+        for rec in d.get("resultList", {}).get("result", []):
+            pub_year = None
+            if rec.get("pubYear"):
+                try:
+                    pub_year = int(rec.get("pubYear"))
+                except:
+                    pub_year = None
+            out.append({
+                "title": rec.get("title"),
+                "year": pub_year,
+                "url": rec.get("id"),
+                "source": "europepmc",
+                "abstract": rec.get("abstractText") or "",
+                "affiliations": rec.get("authorAffiliations") or []
+            })
+        return out
+
+    def _fetch_newsapi(self, query: str, years_back: Optional[int] = None, pageSize=50) -> List[Dict]:
+        base = "https://newsapi.org/v2/everything"
+        params = {"q": query, "pageSize": pageSize, "apiKey": self.newsapi_key}
+        if years_back:
+            params["from"] = f"{datetime.now().year - int(years_back)}-01-01"
+        r = requests.get(base, params=params, timeout=20)
+        r.raise_for_status()
+        j = r.json()
+        out = []
+        for art in j.get("articles", []):
+            pub_year = None
+            if art.get("publishedAt"):
+                try:
+                    pub_year = int(art["publishedAt"][:4])
+                except:
+                    pub_year = None
+            out.append({
+                "title": art.get("title"),
+                "year": pub_year,
+                "url": art.get("url"),
+                "source": art.get("source", {}).get("name"),
+                "abstract": art.get("description") or ""
+            })
+        return out
+
+    def _fetch_patents_stub(self, query: str, years_back: Optional[int] = None) -> List[Dict]:
+        # placeholder: if you add EPO OPS credentials, implement here.
         return []
+
+    def _detect_countries_in_item(self, item: Dict[str, Any], country_hint: Optional[str] = None) -> List[str]:
+        """
+        Try to detect countries from affiliations, title or abstract.
+        Uses pycountry names if available, else falls back to a small list.
+        Returns list of matched country names.
+        """
+        text_to_search = " ".join(filter(None, [
+            item.get("title", ""),
+            item.get("abstract", ""),
+            " ".join(item.get("affiliations", []) if isinstance(item.get("affiliations"), list) else [item.get("affiliations","")])
+        ])).lower()
+
+        found = set()
+        # quick direct hint match for high recall
+        if country_hint and country_hint.lower() in text_to_search:
+            found.add(country_hint)
+
+        for cname in _COUNTRY_NAMES:
+            if cname.lower() in text_to_search:
+                found.add(cname)
+        return list(found)

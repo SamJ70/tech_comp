@@ -11,3 +11,14 @@ python-dateutil==2.9.0
 pandas==2.2.2
 redis==5.0.1
 celery==5.3.4
+requests
+pdfplumber
+python-docx
+matplotlib
+pandas
+rapidfuzz
+sentence-transformers
+torch
+transformers
+python-multipart
+python-dotenv

@@ -1,284 +1,278 @@
 # backend/app/services/dual_use_analyzer.py
-from typing import Dict, List, Tuple
+import os
+import json
 import re
-from datetime import datetime
+import logging
+from typing import Dict, Any, List, Tuple
+from rapidfuzz import process, fuzz
+import pdfplumber
+
+logger = logging.getLogger(__name__)
+
+# semantic imports are optional (fallback to fuzzy only)
+try:
+    from sentence_transformers import SentenceTransformer, util
+    EMB_MODEL = SentenceTransformer(os.getenv("VERIFIER_MODEL", "all-MiniLM-L6-v2"))
+except Exception as e:
+    EMB_MODEL = None
+    logger.info("sentence-transformers not available; semantic matching disabled: %s", e)
+
+from app.config import WASSENAAR_PDF, WASSENAAR_INDEX
+
+# small stoplist
+STOPWORDS = set([
+    "equipment", "system", "systems", "technology", "technologies", "the", "and", "for", "of", "in", "with", "to",
+    "a", "an", "by", "on", "from", "using"
+])
+
+def _tokenize_keywords(text: str, min_len: int = 4, topN: int = 8) -> List[str]:
+    # simple keyword extractor: pick words longer than min_len, exclude stopwords, return top unique
+    words = re.findall(r"[A-Za-z0-9\-]{4,}", text.lower())
+    freqs = {}
+    for w in words:
+        if w in STOPWORDS: continue
+        freqs[w] = freqs.get(w, 0) + 1
+    sorted_keys = sorted(freqs.items(), key=lambda x: (-x[1], x[0]))
+    return [k for k, _ in sorted_keys[:topN]]
 
 class DualUseAnalyzer:
-    """Analyzes technology for dual-use (civilian/military) applications"""
-    
-    def __init__(self):
-        # Wassenaar Arrangement Categories (simplified version)
-        self.wassenaar_categories = {
-            "AI_ML": {
-                "keywords": ["artificial intelligence", "machine learning", "neural network", "deep learning"],
-                "military_indicators": ["autonomous weapons", "target recognition", "military ai", "defense ai"],
-                "safe_limit": "civilian research only",
-                "category": "Category 4 - Computers"
-            },
-            "QUANTUM": {
-                "keywords": ["quantum computing", "quantum cryptography", "quantum communication"],
-                "military_indicators": ["quantum encryption", "military quantum", "secure communications"],
-                "safe_limit": "research and civilian communications",
-                "category": "Category 5 Part 2 - Information Security"
-            },
-            "ROBOTICS": {
-                "keywords": ["robotics", "autonomous systems", "drones", "uav"],
-                "military_indicators": ["military drone", "combat robot", "autonomous weapon", "lethal autonomous"],
-                "safe_limit": "industrial and civilian use only",
-                "category": "Category 2 - Materials Processing"
-            },
-            "CYBER": {
-                "keywords": ["cybersecurity", "intrusion software", "network surveillance"],
-                "military_indicators": ["cyber warfare", "offensive cyber", "cyber weapon"],
-                "safe_limit": "defensive cybersecurity only",
-                "category": "Category 5 Part 2 - Information Security"
-            },
-            "BIOTECH": {
-                "keywords": ["biotechnology", "genetic engineering", "crispr", "gene editing"],
-                "military_indicators": ["biological weapon", "bioweapon", "military biological"],
-                "safe_limit": "medical and agricultural research only",
-                "category": "Category 1 - Materials, Chemicals, Microorganisms & Toxins"
-            },
-            "SPACE": {
-                "keywords": ["satellite", "space technology", "rocket", "launch vehicle"],
-                "military_indicators": ["military satellite", "spy satellite", "reconnaissance satellite", "anti-satellite"],
-                "safe_limit": "civilian space exploration and communications",
-                "category": "Category 9 - Aerospace and Propulsion"
-            },
-            "TELECOM": {
-                "keywords": ["5g", "telecommunications", "network infrastructure"],
-                "military_indicators": ["military communications", "secure military network"],
-                "safe_limit": "civilian communications infrastructure",
-                "category": "Category 5 Part 1 - Telecommunications"
-            },
-            "ENERGY": {
-                "keywords": ["nuclear energy", "fusion", "advanced reactors"],
-                "military_indicators": ["nuclear weapon", "weapons-grade", "enrichment"],
-                "safe_limit": "civilian power generation only",
-                "category": "Category 0 - Nuclear Materials"
-            }
-        }
-        
-        # Risk levels
-        self.risk_levels = {
-            "LOW": "Within safe limits - primarily civilian applications",
-            "MODERATE": "Some dual-use concerns - requires monitoring",
-            "HIGH": "Significant military applications detected",
-            "CRITICAL": "Potential weapons development or prohibited activities"
-        }
-    
-    def analyze_dual_use(self, country: str, domain: str, data: Dict, time_range: int = None) -> Dict:
-        """
-        Analyze technology for dual-use applications
-        
-        Args:
-            country: Country name
-            domain: Technology domain
-            data: Fetched data with text content
-            time_range: Optional year range to filter (e.g., 5 for last 5 years)
-        
-        Returns:
-            Analysis results with risk assessment
-        """
-        combined_text = " ".join(data.get("raw_text", [])).lower()
-        current_year = datetime.now().year
-        
-        # Filter by time range if specified
-        if time_range:
-            filtered_text = self._filter_by_time_range(combined_text, current_year - time_range, current_year)
+    def __init__(self, pdf_path: str = None, cache_json: str = None):
+        self.pdf_path = pdf_path or WASSENAAR_PDF
+        self.cache_json = cache_json or WASSENAAR_INDEX
+        self.index = []
+        self._choices = []
+        self._choice_metadata = []
+
+        if os.path.exists(self.cache_json):
+            try:
+                with open(self.cache_json, "r", encoding="utf-8") as f:
+                    self.index = json.load(f)
+            except Exception:
+                logger.exception("Failed to load existing Wassenaar index; will reparse.")
+                self.index = []
+
+        if not self.index and os.path.exists(self.pdf_path):
+            self.index = self._parse_wassenaar_pdf(self.pdf_path)
+            try:
+                with open(self.cache_json, "w", encoding="utf-8") as f:
+                    json.dump(self.index, f, ensure_ascii=False, indent=2)
+            except Exception:
+                logger.exception("Failed to write Wassenaar index cache")
+
+        # flatten choices and metadata for fuzzy matching
+        for it in self.index:
+            text = it.get("text", "")
+            self._choices.append(text)
+            self._choice_metadata.append(it)
+
+        # precompute embeddings for index entries (optional)
+        if EMB_MODEL and self._choices:
+            try:
+                self._index_embeddings = EMB_MODEL.encode(self._choices, convert_to_tensor=True)
+            except Exception as e:
+                logger.exception("Failed to encode Wassenaar index embeddings: %s", e)
+                self._index_embeddings = None
         else:
-            filtered_text = combined_text
-        
-        # Identify relevant Wassenaar category
-        category_match = self._identify_wassenaar_category(domain)
-        
-        if not category_match:
-            return {
-                "risk_level": "LOW",
-                "wassenaar_category": "Not classified",
-                "compliance_status": "N/A",
-                "findings": ["Domain not in dual-use categories"],
-                "military_indicators": [],
-                "civilian_indicators": [],
-                "recommendations": ["Continue monitoring general technology development"]
-            }
-        
-        # Analyze content
-        military_indicators = self._find_military_indicators(filtered_text, category_match)
-        civilian_indicators = self._find_civilian_indicators(filtered_text, category_match)
-        
-        # Calculate risk level
-        risk_level = self._calculate_risk_level(military_indicators, civilian_indicators)
-        
-        # Generate compliance assessment
-        compliance = self._assess_compliance(risk_level, category_match)
-        
-        # Extract specific developments
-        developments = self._extract_developments(filtered_text, country, time_range)
-        
-        return {
-            "risk_level": risk_level,
-            "risk_description": self.risk_levels[risk_level],
-            "wassenaar_category": category_match["category"],
-            "safe_limit": category_match["safe_limit"],
-            "compliance_status": compliance["status"],
-            "compliance_notes": compliance["notes"],
-            "military_indicators": military_indicators,
-            "civilian_indicators": civilian_indicators,
-            "developments": developments,
-            "recommendations": self._generate_recommendations(risk_level, military_indicators),
-            "monitoring_required": risk_level in ["MODERATE", "HIGH", "CRITICAL"]
+            self._index_embeddings = None
+
+    def _parse_wassenaar_pdf(self, path: str) -> List[Dict[str, Any]]:
+        """
+        Heuristic PDF parsing:
+        - extract text per page
+        - build paragraphs by merging lines until blank lines
+        - select paragraphs that look like list items (contain tech keywords or codes)
+        - for each paragraph, extract candidate keywords
+        """
+        items: List[Dict[str, Any]] = []
+        try:
+            with pdfplumber.open(path) as pdf:
+                pages_text = []
+                for p in pdf.pages:
+                    txt = p.extract_text() or ""
+                    pages_text.append(txt)
+            full = "\n\n".join(pages_text)
+        except Exception as e:
+            logger.exception("Failed to extract text from Wassenaar PDF: %s", e)
+            return items
+
+        # split into paragraphs on double newlines or lines starting with digit/letter code patterns
+        paragraphs = re.split(r"\n\s*\n", full)
+        # normalise and filter
+        candidate_paragraphs = []
+        kw_hint = ["equipment", "technology", "software", "material", "system", "component",
+                   "processor", "sensor", "detector", "algorithm", "encryption", "biological", "gene"]
+        for p in paragraphs:
+            p_clean = " ".join([l.strip() for l in p.splitlines() if l.strip()])
+            if len(p_clean) < 30:
+                continue
+            low = p_clean.lower()
+            if any(k in low for k in kw_hint) or re.search(r"[0-9]\.[A-Z0-9]", p_clean) or len(p_clean) > 120:
+                candidate_paragraphs.append(p_clean)
+
+        # deduplicate
+        seen = set()
+        for p in candidate_paragraphs:
+            if p in seen: continue
+            seen.add(p)
+            keywords = _tokenize_keywords(p, min_len=4, topN=10)
+            items.append({"text": p, "keywords": keywords})
+
+        # if nothing extracted, fallback to splitting by lines and taking longer lines
+        if not items:
+            lines = [l.strip() for l in full.splitlines() if len(l.strip()) > 40]
+            for ln in lines[:800]:
+                keywords = _tokenize_keywords(ln, min_len=4, topN=8)
+                items.append({"text": ln, "keywords": keywords})
+
+        logger.info("Wassenaar parse produced %d candidate items", len(items))
+        return items
+
+    def analyze_dual_use(self, country: str, domain: str, country_data: Dict[str, Any], time_range: int = None) -> Dict[str, Any]:
+        """
+        Multi-stage detection:
+          1) exact keyword boost (if an item's keywords overlap Wassenaar keywords)
+          2) fuzzy matching (RapidFuzz) with a moderate threshold
+          3) semantic similarity (if embeddings available) with a moderate threshold
+        Returns structured analysis with matched entries, confidence, recommendations.
+        """
+        # Build candidate texts from country_data
+        candidates: List[str] = []
+        for src in ("publications", "patents", "news", "tim", "aspi"):
+            for it in country_data.get(src, []):
+                t = (it.get("title") or "")[:1200]
+                s = (it.get("abstract") or "")[:1500]
+                if t:
+                    candidates.append(t)
+                if s:
+                    candidates.append(s)
+
+        # dedupe and limit
+        candidates = list(dict.fromkeys(candidates))[:800]
+
+        matched: List[Dict[str, Any]] = []
+
+        # Precompute candidate embeddings if EMB_MODEL present
+        candidate_embeddings = None
+        if EMB_MODEL and candidates:
+            try:
+                candidate_embeddings = EMB_MODEL.encode(candidates, convert_to_tensor=True)
+            except Exception as e:
+                logger.info("Failed to compute candidate embeddings: %s", e)
+                candidate_embeddings = None
+
+        # Domain keyword boosters (help with domain-specific mapping)
+        domain_boost_keywords = {
+            "Artificial Intelligence": ["machine learning", "deep learning", "neural network", "transformer", "nlp", "computer vision", "gan", "reinforcement"],
+            "Biotechnology": ["gene", "viral", "bioreactor", "CRISPR", "cell", "biological", "pathogen"],
+            "Space Technology": ["satellite", "rocket", "launcher", "satcom", "orbiter", "payload"],
+            "Quantum Computing": ["qubit", "quantum", "superposition", "entanglement", "photon"],
+            "Robotics": ["robot", "actuator", "autonomous", "manipulator", "uav", "drone"],
+            "Cybersecurity": ["encryption", "cryptography", "exploit", "vulnerability", "malware", "backdoor"]
         }
-    
-    def _identify_wassenaar_category(self, domain: str) -> Dict:
-        """Match domain to Wassenaar category"""
-        domain_lower = domain.lower()
-        
-        for category, info in self.wassenaar_categories.items():
-            if any(keyword in domain_lower for keyword in info["keywords"]):
-                return info
-        
-        return None
-    
-    def _find_military_indicators(self, text: str, category: Dict) -> List[Dict]:
-        """Find military application indicators"""
-        indicators = []
-        
-        for indicator in category["military_indicators"]:
-            if indicator in text:
-                # Find context
-                pattern = rf'.{{0,100}}{re.escape(indicator)}.{{0,100}}'
-                matches = re.findall(pattern, text, re.IGNORECASE)
-                
-                for match in matches[:3]:  # Limit to 3 examples
-                    indicators.append({
-                        "indicator": indicator,
-                        "context": match.strip(),
-                        "severity": "HIGH" if any(word in indicator for word in ["weapon", "combat", "warfare"]) else "MODERATE"
-                    })
-        
-        return indicators
-    
-    def _find_civilian_indicators(self, text: str, category: Dict) -> List[str]:
-        """Find civilian application indicators"""
-        civilian_keywords = [
-            "research", "university", "academic", "medical", "healthcare",
-            "commercial", "consumer", "industrial", "civilian", "peaceful",
-            "education", "scientific", "innovation", "startup", "business"
-        ]
-        
-        indicators = []
-        for keyword in civilian_keywords:
-            if keyword in text:
-                indicators.append(keyword)
-        
-        return list(set(indicators))[:10]
-    
-    def _calculate_risk_level(self, military_indicators: List, civilian_indicators: List) -> str:
-        """Calculate overall risk level"""
-        mil_count = len(military_indicators)
-        civ_count = len(civilian_indicators)
-        
-        # Check for high-severity military indicators
-        high_severity = sum(1 for ind in military_indicators if ind.get("severity") == "HIGH")
-        
-        if high_severity >= 2:
-            return "CRITICAL"
-        elif mil_count >= 5 or (mil_count >= 3 and civ_count < 3):
-            return "HIGH"
-        elif mil_count >= 2 or (mil_count >= 1 and civ_count < 5):
-            return "MODERATE"
-        else:
-            return "LOW"
-    
-    def _assess_compliance(self, risk_level: str, category: Dict) -> Dict:
-        """Assess compliance with safe limits"""
-        if risk_level == "LOW":
-            return {
-                "status": "COMPLIANT",
-                "notes": f"Development appears within safe limits: {category['safe_limit']}"
-            }
-        elif risk_level == "MODERATE":
-            return {
-                "status": "MONITORING_REQUIRED",
-                "notes": "Some dual-use concerns detected. Continued monitoring recommended."
-            }
-        elif risk_level == "HIGH":
-            return {
-                "status": "NON_COMPLIANT",
-                "notes": "Significant military applications detected. May exceed safe civilian use limits."
-            }
-        else:  # CRITICAL
-            return {
-                "status": "CRITICAL_VIOLATION",
-                "notes": "Potential weapons development or prohibited activities detected. Immediate review required."
-            }
-    
-    def _extract_developments(self, text: str, country: str, time_range: int) -> List[Dict]:
-        """Extract specific technology developments"""
-        developments = []
-        
-        # Find sentences with years
-        year_pattern = r'\b(20\d{2})\b'
-        sentences = re.split(r'[.!?]+', text)
-        
-        current_year = datetime.now().year
-        min_year = current_year - time_range if time_range else 2015
-        
-        for sentence in sentences:
-            years = re.findall(year_pattern, sentence)
-            for year_str in years:
-                year = int(year_str)
-                if min_year <= year <= current_year:
-                    if country.lower() in sentence.lower() and len(sentence) > 50:
-                        developments.append({
-                            "year": year,
-                            "description": sentence.strip()[:300],
-                            "relevance": "high" if any(word in sentence.lower() for word in ["launched", "developed", "announced"]) else "medium"
+        boosters = domain_boost_keywords.get(domain, [])
+
+        # Step A: keyword overlaps (fast)
+        for idx, cand in enumerate(candidates[:500]):
+            cand_low = cand.lower()
+            best = None
+            # exact keyword overlap with Wassenaar keywords
+            for i, meta in enumerate(self._choice_metadata):
+                kws = meta.get("keywords", [])
+                if not kws: continue
+                overlap = sum(1 for k in kws if k in cand_low)
+                if overlap >= 1:
+                    # initial fuzzy match to rank
+                    score = fuzz.token_set_ratio(cand_low, meta.get("text",""))
+                    if score >= 55:
+                        best = {"candidate_index": idx, "choice_index": i, "score": int(score), "method": "keyword_overlap"}
+                        matched.append({
+                            "token": cand[:400],
+                            "matched_text": meta.get("text","")[:1000],
+                            "score": int(score),
+                            "method": "keyword_overlap"
                         })
-        
-        # Sort by year descending
-        developments.sort(key=lambda x: x["year"], reverse=True)
-        return developments[:15]
-    
-    def _generate_recommendations(self, risk_level: str, military_indicators: List) -> List[str]:
-        """Generate recommendations based on analysis"""
-        recommendations = []
-        
-        if risk_level == "CRITICAL":
-            recommendations.extend([
-                "Immediate investigation required into potential weapons development",
-                "Review international export control compliance",
-                "Engage with relevant authorities for verification"
-            ])
-        elif risk_level == "HIGH":
-            recommendations.extend([
-                "Enhanced monitoring of military applications",
-                "Verify end-use of exported technologies",
-                "Regular compliance audits recommended"
-            ])
-        elif risk_level == "MODERATE":
-            recommendations.extend([
-                "Continue routine monitoring",
-                "Track developments in military applications",
-                "Maintain awareness of dual-use concerns"
-            ])
+
+        # Step B: fuzzy matching (RapidFuzz) on remaining candidates
+        for cand in candidates[:400]:
+            if not self._choices:
+                break
+            match, score, idx = process.extractOne(cand, self._choices, scorer=fuzz.token_sort_ratio) or (None, 0, None)
+            # boost if domain words present
+            boost = 0
+            for b in boosters:
+                if b in cand.lower():
+                    boost += 7
+            final_score = score + boost
+            if match and final_score >= 65:
+                meta = self._choice_metadata[idx]
+                matched.append({"token": cand[:400], "matched_text": match, "score": int(final_score), "method": "fuzzy", "meta": meta})
+
+        # Step C: semantic similarity if embeddings available
+        if EMB_MODEL and self._index_embeddings is not None and candidate_embeddings is not None:
+            try:
+                cos = util.cos_sim(candidate_embeddings, self._index_embeddings)
+                # cos is matrix candidates x index
+                import torch
+                cos_np = cos.cpu().numpy()
+                for i in range(cos_np.shape[0]):
+                    best_idx = int(cos_np[i].argmax())
+                    best_score = float(cos_np[i, best_idx])
+                    if best_score >= 0.55:  # semantic threshold (0..1)
+                        meta = self._choice_metadata[best_idx]
+                        matched.append({
+                            "token": candidates[i][:400],
+                            "matched_text": meta.get("text","")[:1000],
+                            "score": int(best_score * 100),
+                            "method": "semantic",
+                            "meta": meta
+                        })
+            except Exception as e:
+                logger.exception("Semantic matching pass failed: %s", e)
+
+        # Normalize matched (dedupe by matched_text)
+        dedup = {}
+        for m in matched:
+            key = m.get("matched_text")[:200]
+            prev = dedup.get(key)
+            if not prev or m.get("score",0) > prev.get("score",0):
+                dedup[key] = m
+        matched_list = sorted(dedup.values(), key=lambda x: x.get("score",0), reverse=True)
+
+        # Heuristic severity
+        severity = "LOW"
+        if any(m["score"] >= 92 for m in matched_list):
+            severity = "CRITICAL"
+        elif any(m["score"] >= 85 for m in matched_list):
+            severity = "HIGH"
+        elif any(m["score"] >= 70 for m in matched_list):
+            severity = "MODERATE"
+
+        safe_limit = "restricted" if severity in ("HIGH", "CRITICAL") else "permitted"
+
+        # build output
+        out = {
+            "risk_level": severity,
+            "risk_description": f"Heuristic matched {len(matched_list)} potential Wassenaar-relevant entries (multi-stage matching).",
+            "compliance_status": "NON_COMPLIANT" if severity in ("HIGH","CRITICAL") else ("MONITORING_REQUIRED" if severity=="MODERATE" else "COMPLIANT"),
+            "compliance_notes": f"Top matches: {', '.join([m['matched_text'][:120] for m in matched_list[:6]])}",
+            "wassenaar_category": matched_list[0]["matched_text"] if matched_list else "Not matched",
+            "safe_limit": safe_limit,
+            "military_indicators": matched_list[:200],
+            "recommendations": self._recommendations_for_severity(severity),
+            "confidence_score": min(0.99, sum([m.get("score",0) for m in matched_list[:5]]) / 500.0 if matched_list else 0.05
+                                 )
+        }
+        return out
+
+    def _recommendations_for_severity(self, severity: str) -> List[str]:
+        recs = []
+        if severity in ("HIGH","CRITICAL"):
+            recs.append("Immediate internal review and export-control check recommended.")
+            recs.append("Contact national export control authority for classification.")
+            recs.append("Temporarily restrict external dissemination of flagged projects.")
+        elif severity == "MODERATE":
+            recs.append("Flag similar future outputs for human review.")
+            recs.append("Monitor collaborations and external beneficiaries.")
         else:
-            recommendations.append("Standard monitoring procedures sufficient")
-        
-        if military_indicators:
-            recommendations.append(f"Investigate {len(military_indicators)} military application indicators")
-        
-        return recommendations
-    
-    def _filter_by_time_range(self, text: str, start_year: int, end_year: int) -> str:
-        """Filter text to only include content from specified year range"""
-        sentences = re.split(r'[.!?]+', text)
-        filtered = []
-        
-        for sentence in sentences:
-            years = re.findall(r'\b(20\d{2})\b', sentence)
-            if any(start_year <= int(year) <= end_year for year in years):
-                filtered.append(sentence)
-        
-        return ". ".join(filtered)
+            recs.append("No immediate dual-use flag detected; maintain routine monitoring.")
+        return recs
