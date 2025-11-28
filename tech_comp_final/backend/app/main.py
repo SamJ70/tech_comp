@@ -1,4 +1,4 @@
-# backend/app/main.py
+# backend/app/main.py (COMPLETE REPLACEMENT)
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -12,17 +12,19 @@ from enum import Enum
 from .services.enhanced_data_fetcher import EnhancedDataFetcher
 from .services.enhanced_data_analyzer import EnhancedDataAnalyzer
 from .services.enhanced_document_generator import ImprovedDocumentGenerator as EnhancedDocumentGenerator
+from .services.dual_use_analyzer import DualUseAnalyzer
+from .services.chronological_tracker import ChronologicalTracker
 
 app = FastAPI(
     title="Advanced Country Tech Comparison API",
-    description="AI-powered technology comparison between countries",
-    version="2.0.0"
+    description="AI-powered technology comparison with dual-use monitoring",
+    version="3.0.0"
 )
 
 # CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],  # Frontend URLs
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -50,23 +52,26 @@ class ComparisonRequest(BaseModel):
     domain: str = Field(..., min_length=2, max_length=100)
     include_charts: bool = Field(default=True)
     detail_level: str = Field(default="standard", pattern="^(basic|standard|comprehensive)$")
+    time_range: Optional[int] = Field(default=None, description="Years to analyze (e.g., 5 for last 5 years)")
 
-class ComparisonStatus(BaseModel):
-    task_id: str
-    status: str
-    progress: int
-    message: str
+class SingleCountryRequest(BaseModel):
+    country: str = Field(..., min_length=2, max_length=100)
+    domain: str = Field(..., min_length=2, max_length=100)
+    time_range: Optional[int] = Field(default=None, description="Years to analyze")
+    include_dual_use: bool = Field(default=True, description="Include dual-use analysis")
+    include_chronology: bool = Field(default=True, description="Include chronological tracking")
 
-# In-memory cache for demo (use Redis in production)
+# In-memory cache
 comparison_cache = {}
 active_tasks = {}
 
 @app.get("/")
 async def root():
     return {
-        "message": "Advanced Country Tech Comparison API v2.0",
+        "message": "Advanced Country Tech Comparison API v3.0",
         "endpoints": {
             "/compare": "POST - Compare two countries",
+            "/analyze-country": "POST - Analyze single country with dual-use monitoring",
             "/domains": "GET - List available tech domains",
             "/countries": "GET - Get country suggestions",
             "/status/{task_id}": "GET - Check comparison status",
@@ -75,7 +80,10 @@ async def root():
         "features": [
             "Multi-source data collection",
             "AI-powered analysis",
-            "Real-time progress updates",
+            "Dual-use technology monitoring (Wassenaar Arrangement)",
+            "Chronological progress tracking",
+            "Time-range filtering",
+            "Military vs civilian classification",
             "Interactive visualizations",
             "Comprehensive reports"
         ]
@@ -89,7 +97,8 @@ async def get_domains():
             "id": domain.value,
             "name": domain.value,
             "description": get_domain_description(domain.value),
-            "icon": get_domain_icon(domain.value)
+            "icon": get_domain_icon(domain.value),
+            "dual_use_risk": get_dual_use_risk(domain.value)
         }
         for domain in TechDomain
     ]
@@ -119,19 +128,13 @@ async def get_country_suggestions():
 
 @app.post("/compare")
 async def compare_countries(request: ComparisonRequest, background_tasks: BackgroundTasks):
-    """
-    Start a country comparison analysis
-    Returns immediately with task_id for status tracking
-    """
+    """Compare two countries"""
     try:
-        # Validate inputs
         if request.country1.lower() == request.country2.lower():
             raise HTTPException(status_code=400, detail="Cannot compare a country with itself")
         
-        # Generate task ID
         task_id = f"{request.country1}_{request.country2}_{request.domain}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
-        # Initialize task status
         active_tasks[task_id] = {
             "status": "initializing",
             "progress": 0,
@@ -139,15 +142,10 @@ async def compare_countries(request: ComparisonRequest, background_tasks: Backgr
             "started_at": datetime.now().isoformat()
         }
         
-        # Run comparison in background
         background_tasks.add_task(
             perform_comparison,
-            task_id,
-            request.country1,
-            request.country2,
-            request.domain,
-            request.include_charts,
-            request.detail_level
+            task_id, request.country1, request.country2, request.domain,
+            request.include_charts, request.detail_level, request.time_range
         )
         
         return {
@@ -160,15 +158,43 @@ async def compare_countries(request: ComparisonRequest, background_tasks: Backgr
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error starting comparison: {str(e)}")
 
+@app.post("/analyze-country")
+async def analyze_single_country(request: SingleCountryRequest, background_tasks: BackgroundTasks):
+    """Analyze single country with dual-use monitoring and chronological tracking"""
+    try:
+        task_id = f"{request.country}_{request.domain}_single_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        active_tasks[task_id] = {
+            "status": "initializing",
+            "progress": 0,
+            "message": f"Starting analysis of {request.country}...",
+            "started_at": datetime.now().isoformat()
+        }
+        
+        background_tasks.add_task(
+            perform_single_country_analysis,
+            task_id, request.country, request.domain, request.time_range,
+            request.include_dual_use, request.include_chronology
+        )
+        
+        return {
+            "task_id": task_id,
+            "status": "started",
+            "message": "Analysis started successfully",
+            "check_status_url": f"/status/{task_id}"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error starting analysis: {str(e)}")
+
 @app.get("/status/{task_id}")
 async def get_comparison_status(task_id: str):
-    """Get the status of a running comparison"""
+    """Get the status of a running task"""
     if task_id not in active_tasks:
         raise HTTPException(status_code=404, detail="Task not found")
     
     task_info = active_tasks[task_id]
     
-    # If completed, include results
     if task_info["status"] == "completed" and task_id in comparison_cache:
         return {
             **task_info,
@@ -192,63 +218,54 @@ async def download_document(filename: str):
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 
-@app.get("/history")
-async def get_comparison_history(limit: int = 10):
-    """Get recent comparisons"""
-    history = sorted(
-        [
-            {
-                "task_id": task_id,
-                **task_info,
-                "has_results": task_id in comparison_cache
-            }
-            for task_id, task_info in active_tasks.items()
-            if task_info["status"] == "completed"
-        ],
-        key=lambda x: x.get("completed_at", ""),
-        reverse=True
-    )[:limit]
-    
-    return {"history": history}
-
-# Background task function
+# Background task functions
 async def perform_comparison(
-    task_id: str,
-    country1: str,
-    country2: str,
-    domain: str,
-    include_charts: bool,
-    detail_level: str
+    task_id: str, country1: str, country2: str, domain: str,
+    include_charts: bool, detail_level: str, time_range: Optional[int]
 ):
     """Perform the actual comparison analysis"""
     try:
-        # Update status
         active_tasks[task_id]["status"] = "fetching_data"
         active_tasks[task_id]["progress"] = 10
         active_tasks[task_id]["message"] = f"Collecting data for {country1}..."
         
-        # Initialize services
         fetcher = EnhancedDataFetcher()
         analyzer = EnhancedDataAnalyzer()
+        dual_use_analyzer = DualUseAnalyzer()
+        chrono_tracker = ChronologicalTracker()
         doc_generator = EnhancedDocumentGenerator()
         
-        # Fetch data for country 1
+        # Fetch data
         country1_data = await fetcher.fetch_country_tech_data(country1, domain)
         active_tasks[task_id]["progress"] = 30
         active_tasks[task_id]["message"] = f"Collecting data for {country2}..."
         
-        # Fetch data for country 2
         country2_data = await fetcher.fetch_country_tech_data(country2, domain)
         active_tasks[task_id]["progress"] = 50
         active_tasks[task_id]["message"] = "Analyzing and comparing data..."
         
-        # Perform analysis
+        # Perform standard analysis
         analysis = analyzer.analyze_and_compare(
             country1, country2, domain,
             country1_data, country2_data,
             detail_level=detail_level
         )
-        active_tasks[task_id]["progress"] = 80
+        
+        active_tasks[task_id]["progress"] = 65
+        active_tasks[task_id]["message"] = "Performing dual-use analysis..."
+        
+        # Dual-use analysis for both countries
+        dual_use1 = dual_use_analyzer.analyze_dual_use(country1, domain, country1_data, time_range)
+        dual_use2 = dual_use_analyzer.analyze_dual_use(country2, domain, country2_data, time_range)
+        
+        active_tasks[task_id]["progress"] = 75
+        active_tasks[task_id]["message"] = "Tracking chronological progress..."
+        
+        # Chronological tracking
+        chrono1 = chrono_tracker.track_progress(country1, domain, country1_data, time_range)
+        chrono2 = chrono_tracker.track_progress(country2, domain, country2_data, time_range)
+        
+        active_tasks[task_id]["progress"] = 85
         active_tasks[task_id]["message"] = "Generating report..."
         
         # Generate document
@@ -256,24 +273,46 @@ async def perform_comparison(
         filepath = f"reports/{filename}"
         os.makedirs("reports", exist_ok=True)
         
+        # Combine all analysis
+        combined_analysis = {
+            **analysis,
+            "dual_use_analysis": {
+                country1: dual_use1,
+                country2: dual_use2
+            },
+            "chronological_tracking": {
+                country1: chrono1,
+                country2: chrono2
+            },
+            "time_range_analyzed": time_range
+        }
+        
         doc_generator.generate_document(
             country1, country2, domain,
-            analysis, filepath,
+            combined_analysis, filepath,
             include_charts=include_charts
         )
         
         # Prepare results
         results = {
+            "type": "comparison",
             "domain": domain,
             "countries": [country1, country2],
             "summary": analysis["summary"],
-            "metrics": analysis.get("concrete_metrics", {}),
             "comparison": analysis["comparison"],
             "overall_analysis": analysis["overall_analysis"],
-            "charts_data": analysis.get("charts_data", {}),
-            "key_findings": analysis.get("key_findings", []),
-            "recommendations": analysis.get("recommendations", []),
-            "data_quality": analysis.get("data_quality", {}),
+            "dual_use_analysis": {
+                country1: dual_use1,
+                country2: dual_use2
+            },
+            "chronological_data": {
+                country1: chrono1["timeline"][:5],
+                country2: chrono2["timeline"][:5]
+            },
+            "trends": {
+                country1: chrono1["trends"],
+                country2: chrono2["trends"]
+            },
             "document": {
                 "filename": filename,
                 "download_url": f"/download/{filename}"
@@ -281,6 +320,7 @@ async def perform_comparison(
             "metadata": {
                 "analyzed_at": datetime.now().isoformat(),
                 "detail_level": detail_level,
+                "time_range": time_range,
                 "sources_used": {
                     country1: len(country1_data.get("raw_text", [])),
                     country2: len(country2_data.get("raw_text", []))
@@ -288,13 +328,73 @@ async def perform_comparison(
             }
         }
         
-        # Cache results
         comparison_cache[task_id] = results
         
-        # Update status
         active_tasks[task_id]["status"] = "completed"
         active_tasks[task_id]["progress"] = 100
         active_tasks[task_id]["message"] = "Comparison completed successfully!"
+        active_tasks[task_id]["completed_at"] = datetime.now().isoformat()
+        
+    except Exception as e:
+        active_tasks[task_id]["status"] = "failed"
+        active_tasks[task_id]["message"] = f"Error: {str(e)}"
+        active_tasks[task_id]["error"] = str(e)
+
+async def perform_single_country_analysis(
+    task_id: str, country: str, domain: str, time_range: Optional[int],
+    include_dual_use: bool, include_chronology: bool
+):
+    """Perform single country analysis with dual-use and chronological tracking"""
+    try:
+        active_tasks[task_id]["status"] = "fetching_data"
+        active_tasks[task_id]["progress"] = 15
+        active_tasks[task_id]["message"] = f"Collecting data for {country}..."
+        
+        fetcher = EnhancedDataFetcher()
+        dual_use_analyzer = DualUseAnalyzer()
+        chrono_tracker = ChronologicalTracker()
+        
+        # Fetch data
+        country_data = await fetcher.fetch_country_tech_data(country, domain)
+        
+        active_tasks[task_id]["progress"] = 40
+        active_tasks[task_id]["message"] = "Analyzing dual-use compliance..."
+        
+        # Dual-use analysis
+        dual_use_results = None
+        if include_dual_use:
+            dual_use_results = dual_use_analyzer.analyze_dual_use(country, domain, country_data, time_range)
+        
+        active_tasks[task_id]["progress"] = 65
+        active_tasks[task_id]["message"] = "Tracking chronological progress..."
+        
+        # Chronological tracking
+        chrono_results = None
+        if include_chronology:
+            chrono_results = chrono_tracker.track_progress(country, domain, country_data, time_range)
+        
+        active_tasks[task_id]["progress"] = 90
+        active_tasks[task_id]["message"] = "Finalizing analysis..."
+        
+        # Prepare results
+        results = {
+            "type": "single_country",
+            "country": country,
+            "domain": domain,
+            "time_range": time_range,
+            "dual_use_analysis": dual_use_results,
+            "chronological_analysis": chrono_results,
+            "metadata": {
+                "analyzed_at": datetime.now().isoformat(),
+                "sources_used": len(country_data.get("raw_text", []))
+            }
+        }
+        
+        comparison_cache[task_id] = results
+        
+        active_tasks[task_id]["status"] = "completed"
+        active_tasks[task_id]["progress"] = 100
+        active_tasks[task_id]["message"] = "Analysis completed successfully!"
         active_tasks[task_id]["completed_at"] = datetime.now().isoformat()
         
     except Exception as e:
@@ -332,6 +432,18 @@ def get_domain_icon(domain: str) -> str:
         "Nanotechnology": "🔬"
     }
     return icons.get(domain, "💡")
+
+def get_dual_use_risk(domain: str) -> str:
+    """Get dual-use risk level for domain"""
+    high_risk = ["Artificial Intelligence", "Quantum Computing", "Robotics", "Cybersecurity", "Space Technology"]
+    medium_risk = ["Biotechnology", "5G and Telecommunications"]
+    
+    if domain in high_risk:
+        return "HIGH"
+    elif domain in medium_risk:
+        return "MEDIUM"
+    else:
+        return "LOW"
 
 if __name__ == "__main__":
     import uvicorn
