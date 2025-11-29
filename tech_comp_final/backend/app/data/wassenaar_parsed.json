@@ -1,0 +1,22 @@
+{
+  "ai_algorithms": [
+    "machine learning",
+    "neural network",
+    "deep learning",
+    "ai model",
+    "training dataset"
+  ],
+  "biotech": [
+    "bioreactor",
+    "cell culture",
+    "gene editing",
+    "crispr"
+  ],
+  "radar_and_sensors": [
+    "radar",
+    "lidar",
+    "sonar",
+    "sensor",
+    "imaging"
+  ]
+}
